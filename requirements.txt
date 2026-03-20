@@ -2,3 +2,6 @@ skyfield
 numpy
 pandas
 matplotlib
+folium
+coord-convert
+pycoord

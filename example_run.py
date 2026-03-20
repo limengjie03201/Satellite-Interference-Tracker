@@ -3,16 +3,19 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from satellite import Satellite
 from groundstation import GroundStation
-from simulation import compute_passes, compute_interference, compute_link_budget_for_passes
+from simulation import compute_passes, compute_interference, compute_link_budget_for_passes, interactive_ground_track
 from skyfield.api import load
 
 os.makedirs('plots', exist_ok=True)
 
-elev_threshold = 5.0        # 最小可视仰角 (度)
-sep_threshold = 2.0         # 干扰判断角距离阈值 (度)
-frequency_ghz = 8.0         # 工作频率 (GHz) - 示例值，可改为实际
-eirp_dbm = 20.0             # 卫星等效全向辐射功率 (dBm)
-pr_threshold_dbm = -100.0   # 接收功率阈值，低于此值视为 Marginal
+elev_threshold = 5.0          # 最小可视仰角 (度)
+sep_threshold = 2.0           # 干扰判断角距离阈值 (度)
+frequency_ghz = 1.7           # NOAA 常用 L 波段
+eirp_dbm = 70.0               # ≈ 40 dBW
+pr_threshold_dbm = -115.0     # 更合理的接收功率阈值
+
+visualize_tracks = True
+track_coord_system = 'gcj02'  # 'wgs84' / 'gcj02' / 'bd09'
 
 try:
     sat1 = Satellite('tle_input/NOAA15.tle')
@@ -27,7 +30,7 @@ try:
     gs_list = []
     for _, row in gs_df.iterrows():
         gs = GroundStation(row['Name'], row['Lat'], row['Lon'], row['Alt_m'])
-        gs.antenna_gain_dbi = row['Antenna_dBi']  # 添加天线增益属性用于链路预算
+        gs.antenna_gain_dbi = row['Antenna_dBi']
         gs_list.append(gs)
 except Exception as e:
     print(f"加载地面站数据失败: {e}")
@@ -48,7 +51,7 @@ def print_results(gs, sats, elev_threshold, sep_threshold, frequency_ghz, eirp_d
         print(f"卫星: {sat.name}")
         pass_df = pd.DataFrame(
             [(p[0].utc_datetime(), p[1].utc_datetime(), f"{p[2]:.1f}") for p in passes],
-            columns=['开始时间', '结束时间', '最大仰角(°)', ]
+            columns=['开始时间', '结束时间', '最大仰角(°)']
         )
         print(pass_df.to_string(index=False))
         
@@ -61,6 +64,7 @@ def print_results(gs, sats, elev_threshold, sep_threshold, frequency_ghz, eirp_d
         )
         print("\n链路预算 / Link Budgets:")
         print(link_df.to_string(index=False))
+
 def plot_passes(gs, sats, elev_threshold, sep_threshold):
     plt.figure(figsize=(12, 6))
     
@@ -71,7 +75,6 @@ def plot_passes(gs, sats, elev_threshold, sep_threshold):
         pass_data[sat.name] = (times_dt, elevs)
         plt.plot(times_dt, elevs, label=sat.name)
     
-    # Interference shading
     times_dt = pass_data[sats[0].name][0]
     elev1 = pass_data[sats[0].name][1]
     elev2 = pass_data[sats[1].name][1]
@@ -100,19 +103,24 @@ def plot_passes(gs, sats, elev_threshold, sep_threshold):
     for start, end in shading_regions:
         plt.axvspan(start, end, color='red', alpha=0.3, label='Interference Risk' if not plt.gca().get_legend_handles_labels()[1] else "")
     
-    plt.title(f"Satellite Passes over {gs.name}")
-    plt.xlabel("UTC Time")
-    plt.ylabel("Elevation (degrees)")
+    plt.title(f"{gs.name} 上空的卫星过境")
+    plt.xlabel("UTC 时间")
+    plt.ylabel("仰角 (度)")
     plt.grid(True)
     plt.ylim(0, 90)
     plt.legend()
     plt.tight_layout()
     plot_file = f"plots/{gs.name.replace(' ', '_')}_passes.png"
     plt.savefig(plot_file)
-    print(f"Plot saved to {plot_file}")
+    print(f"仰角曲线图已保存至: {plot_file}")
     plt.close()
 
-# Run for each GS
 for gs in gs_list:
     print_results(gs, sats, elev_threshold, sep_threshold, frequency_ghz, eirp_dbm, pr_threshold_dbm)
     plot_passes(gs, sats, elev_threshold, sep_threshold)
+    
+    if visualize_tracks:
+        print(f"\n生成 {gs.name} 地面站的卫星轨迹图（坐标系: {track_coord_system.upper()}）...")
+        for sat in sats:
+            _, times, _, _ = compute_passes(sat, gs, duration_hours=24, timestep_sec=60, elev_threshold=elev_threshold)
+            interactive_ground_track(sat, gs, times, coord_system=track_coord_system)
